@@ -110,14 +110,23 @@ end
 
 -- 4. Atmosphere
 local atmosphereOff = false
+local savedAtmosphere = nil
 local function toggleAtmosphere(on)
     atmosphereOff = on
-    for _, effect in pairs(Lighting:GetChildren()) do
-        if effect:IsA("Atmosphere") then
-            pcall(function() effect.Enabled = not on end)
+    if on then
+        for _, effect in pairs(Lighting:GetChildren()) do
+            if effect:IsA("Atmosphere") then
+                savedAtmosphere = effect
+                effect.Parent = nil
+            end
         end
+        notify("FPS Boost", "Atmosphere OFF")
+    else
+        if savedAtmosphere then
+            savedAtmosphere.Parent = Lighting
+        end
+        notify("FPS Boost", "Atmosphere restored")
     end
-    notify("FPS Boost", on and "Atmosphere OFF" or "Atmosphere restored")
 end
 
 -- 5. Textures (set to smooth plastic)
@@ -212,14 +221,25 @@ end
 
 -- 9. Sky
 local skyOff = false
+local savedSky = nil
 local function toggleSky(on)
     skyOff = on
-    for _, obj in pairs(Lighting:GetChildren()) do
-        if obj:IsA("Sky") then
-            pcall(function() obj.Enabled = not on end)
+    if on then
+        -- Remove sky by storing and destroying it
+        for _, obj in pairs(Lighting:GetChildren()) do
+            if obj:IsA("Sky") then
+                savedSky = obj
+                obj.Parent = nil -- remove from lighting without destroying
+            end
         end
+        notify("FPS Boost", "Sky OFF")
+    else
+        -- Restore sky
+        if savedSky then
+            savedSky.Parent = Lighting
+        end
+        notify("FPS Boost", "Sky restored")
     end
-    notify("FPS Boost", on and "Sky OFF" or "Sky restored")
 end
 
 -- 10. Max FPS unlock
