@@ -53,8 +53,8 @@ local originals = {
 
 -- Save original lighting effects
 for _, effect in pairs(Lighting:GetChildren()) do
-    if effect:IsA("PostEffect") or effect:IsA("Sky") or effect:IsA("Atmosphere") then
-        table.insert(originals.lightingEffects, {obj=effect, enabled=effect.Enabled or true})
+    if effect:IsA("PostEffect") then
+        table.insert(originals.lightingEffects, {obj=effect, enabled=effect.Enabled})
     end
 end
 
@@ -80,6 +80,7 @@ local effectsOff = false
 local function toggleEffects(on)
     effectsOff = on
     for _, effect in pairs(Lighting:GetChildren()) do
+        -- Skip Sky and Atmosphere - they don't have Enabled
         if effect:IsA("PostEffect") then
             pcall(function() effect.Enabled = not on end)
         end
