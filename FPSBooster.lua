@@ -1,4 +1,4 @@
--- FPS Booster v1
+-- FPS Booster v2
 -- Removes unnecessary visual elements to improve performance
 -- Control panel with toggles for each optimization
 
@@ -35,26 +35,16 @@ local C = {
 -- SAVED ORIGINAL VALUES
 -- =====================
 local originals = {
-    -- Lighting
-    globalShadows       = Lighting.GlobalShadows,
-    brightness          = Lighting.Brightness,
-    fogEnd              = Lighting.FogEnd,
-    fogStart            = Lighting.FogStart,
-    fogColor            = Lighting.FogColor,
-    ambient             = Lighting.Ambient,
-    outdoorAmbient      = Lighting.OutdoorAmbient,
-    -- Effects
-    lightingEffects     = {},
-    -- Parts
-    decorations         = {},
-    -- Player chars
-    playerTransparency  = {},
+    globalShadows  = Lighting.GlobalShadows,
+    fogEnd         = Lighting.FogEnd,
+    fogStart       = Lighting.FogStart,
+    partMaterials  = {},
 }
 
--- Save original lighting effects
-for _, effect in pairs(Lighting:GetChildren()) do
-    if effect:IsA("PostEffect") then
-        table.insert(originals.lightingEffects, {obj=effect, enabled=effect.Enabled})
+-- Save original part materials so textures can be restored
+for _, obj in pairs(workspace:GetDescendants()) do
+    if obj:IsA("BasePart") then
+        originals.partMaterials[obj] = obj.Material
     end
 end
 
@@ -66,13 +56,8 @@ end
 local shadowsOff = false
 local function toggleShadows(on)
     shadowsOff = on
-    if on then
-        Lighting.GlobalShadows = false
-        notify("FPS Boost", "Shadows OFF")
-    else
-        Lighting.GlobalShadows = originals.globalShadows
-        notify("FPS Boost", "Shadows restored")
-    end
+    Lighting.GlobalShadows = not on
+    notify("FPS Boost", on and "Shadows OFF" or "Shadows restored")
 end
 
 -- 2. Post effects (bloom, blur, color correction etc)
@@ -80,12 +65,10 @@ local effectsOff = false
 local function toggleEffects(on)
     effectsOff = on
     for _, effect in pairs(Lighting:GetChildren()) do
-        -- Skip Sky and Atmosphere - they don't have Enabled
         if effect:IsA("PostEffect") then
             pcall(function() effect.Enabled = not on end)
         end
     end
-    -- Also check workspace effects
     for _, effect in pairs(workspace:GetDescendants()) do
         if effect:IsA("PostEffect") or effect:IsA("ParticleEmitter") or effect:IsA("Trail") or effect:IsA("Beam") then
             pcall(function() effect.Enabled = not on end)
@@ -101,12 +84,11 @@ local function toggleFog(on)
     if on then
         Lighting.FogEnd   = 100000
         Lighting.FogStart = 99999
-        notify("FPS Boost", "Fog OFF")
     else
         Lighting.FogEnd   = originals.fogEnd
         Lighting.FogStart = originals.fogStart
-        notify("FPS Boost", "Fog restored")
     end
+    notify("FPS Boost", on and "Fog OFF" or "Fog restored")
 end
 
 -- 4. Atmosphere
@@ -139,6 +121,9 @@ local function toggleTextures(on)
             pcall(function()
                 if on then
                     obj.Material = Enum.Material.SmoothPlastic
+                else
+                    local saved = originals.partMaterials[obj]
+                    if saved then obj.Material = saved end
                 end
             end)
         end
@@ -151,7 +136,6 @@ end
 
 -- 6. Other players visibility
 local playersHidden = false
-local hiddenChars = {}
 local function togglePlayers(on)
     playersHidden = on
     for _, player in pairs(Players:GetPlayers()) do
@@ -186,24 +170,16 @@ Players.PlayerAdded:Connect(function(player)
     end)
 end)
 
--- 7. Decorations (signs, accessories, hats on NPCs etc)
+-- 7. Decorations / particles
 local decorationsOff = false
 local function toggleDecorations(on)
     decorationsOff = on
-    local decoClasses = {"Accessory","Hat","HopperBin","Tool","SpecialMesh","BillboardGui","SurfaceGui"}
     for _, obj in pairs(workspace:GetDescendants()) do
-        for _, cls in ipairs(decoClasses) do
-            if obj:IsA(cls) and not obj:IsDescendantOf(LocalPlayer.Character or Instance.new("Model")) then
-                pcall(function()
-                    if obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-                        obj.Enabled = not on
-                    end
-                end)
+        if obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+            if not obj:IsDescendantOf(LocalPlayer.Character or Instance.new("Model")) then
+                pcall(function() obj.Enabled = not on end)
             end
         end
-    end
-    -- Hide all particles
-    for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
             pcall(function() obj.Enabled = not on end)
         end
@@ -213,7 +189,6 @@ end
 
 -- 8. Graphics quality
 local function setGraphicsLevel(level)
-    -- Use settings() to set quality
     pcall(function()
         settings().Rendering.QualityLevel = level
     end)
@@ -226,16 +201,14 @@ local savedSky = nil
 local function toggleSky(on)
     skyOff = on
     if on then
-        -- Remove sky by storing and destroying it
         for _, obj in pairs(Lighting:GetChildren()) do
             if obj:IsA("Sky") then
                 savedSky = obj
-                obj.Parent = nil -- remove from lighting without destroying
+                obj.Parent = nil
             end
         end
         notify("FPS Boost", "Sky OFF")
     else
-        -- Restore sky
         if savedSky then
             savedSky.Parent = Lighting
         end
@@ -245,9 +218,14 @@ end
 
 -- 10. Max FPS unlock
 local function unlockFPS()
-    pcall(function()
-        settings().Rendering.FrameRateManager = 0
-    end)
+    -- setfpscap is exposed by most executors including MacSploit; 0 = unlimited
+    if setfpscap then
+        setfpscap(0)
+    else
+        pcall(function()
+            settings().Rendering.FrameRateManager = 0
+        end)
+    end
     notify("FPS Boost", "FPS unlocked!")
 end
 
@@ -266,7 +244,10 @@ local Pill = Instance.new("Frame")
 Pill.Size = UDim2.new(0,160,0,36)
 Pill.Position = UDim2.new(0,20,0,20)
 Pill.BackgroundColor3 = C.bg
-Pill.BorderSizePixel = 0 Pill.ZIndex = 10 Pill.Parent = gui
+Pill.BorderSizePixel = 0
+Pill.Active = true  -- required for InputBegan/InputEnded to fire
+Pill.ZIndex = 10
+Pill.Parent = gui
 Instance.new("UICorner",Pill).CornerRadius = UDim.new(0,10)
 local pillS = Instance.new("UIStroke")
 pillS.Color = Color3.fromRGB(50,50,70) pillS.Parent = Pill
@@ -357,10 +338,13 @@ Scroll.ZIndex = 11 Scroll.Parent = Win
 local Layout = Instance.new("UIListLayout")
 Layout.Padding = UDim.new(0,4)
 Layout.Parent = Scroll
-Instance.new("UIPadding",Scroll).PaddingTop = UDim.new(0,8)
-Instance.new("UIPadding",Scroll).PaddingLeft = UDim.new(0,8)
-Instance.new("UIPadding",Scroll).PaddingRight = UDim.new(0,8)
-Instance.new("UIPadding",Scroll).PaddingBottom = UDim.new(0,8)
+
+-- Single UIPadding instance with all four sides set
+local scrollPad = Instance.new("UIPadding", Scroll)
+scrollPad.PaddingTop    = UDim.new(0,8)
+scrollPad.PaddingLeft   = UDim.new(0,8)
+scrollPad.PaddingRight  = UDim.new(0,8)
+scrollPad.PaddingBottom = UDim.new(0,8)
 
 -- =====================
 -- UI BUILDERS
@@ -404,7 +388,6 @@ local function makeToggleRow(icon, label, desc, onFn, offFn)
     descLbl.TextWrapped = true
     descLbl.Text = desc descLbl.ZIndex = 13 descLbl.Parent = row
 
-    -- Toggle button
     local isOn = false
     local togBtn = Instance.new("TextButton")
     togBtn.Size = UDim2.new(0,54,0,26) togBtn.Position = UDim2.new(1,-60,0.5,-13)
@@ -486,7 +469,6 @@ makeToggleRow("👥","Other Players","Hides other player characters",
 
 sectionLabel("Graphics Level")
 
--- Graphics level buttons
 local gfxRow = Instance.new("Frame")
 gfxRow.Size = UDim2.new(1,0,0,30)
 gfxRow.BackgroundTransparency = 1 gfxRow.ZIndex = 12 gfxRow.Parent = Scroll
@@ -524,7 +506,9 @@ makeBtn("🔥 Apply ALL Boosts", C.accent:Lerp(Color3.new(0,0,0),0.4), function(
     toggleFog(true)
     toggleAtmosphere(true)
     toggleSky(true)
+    toggleTextures(true)
     toggleDecorations(true)
+    togglePlayers(true)
     setGraphicsLevel(1)
     unlockFPS()
     notify("FPS Boost", "All boosts applied!")
