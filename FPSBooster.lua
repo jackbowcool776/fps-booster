@@ -8,7 +8,9 @@ local StarterGui       = game:GetService("StarterGui")
 
 local LocalPlayer = Players.LocalPlayer
 
+local suppressNotify = false
 local function notify(t, m)
+    if suppressNotify then return end
     pcall(function()
         StarterGui:SetCore("SendNotification", {Title=t, Text=m, Duration=3})
     end)
@@ -33,11 +35,16 @@ local originals = {
     fogStart      = Lighting.FogStart,
     partMaterials = {},
 }
-for _, obj in pairs(workspace:GetDescendants()) do
-    if obj:IsA("BasePart") then
-        originals.partMaterials[obj] = obj.Material
+-- chunked across frames so it doesn't spike on load
+task.spawn(function()
+    local descendants = workspace:GetDescendants()
+    for i, obj in ipairs(descendants) do
+        if obj:IsA("BasePart") then
+            originals.partMaterials[obj] = obj.Material
+        end
+        if i % 200 == 0 then task.wait() end
     end
-end
+end)
 
 -- declared early so checkPerformance and the FPS counter share it
 local fpsBuffer = {}
@@ -464,16 +471,20 @@ sectionLabel(Scroll, "Quick Actions")
 makeBtn(Scroll, "⚡ Unlock FPS Cap", C.accent:Lerp(Color3.new(0,0,0),0.3), unlockFPS)
 
 makeBtn(Scroll, "🔥 Apply ALL Boosts", C.accent:Lerp(Color3.new(0,0,0),0.4), function()
+    suppressNotify = true
     setShadows(true); setEffects(true); setFog(true); setAtmosphere(true)
     setSky(true); setTextures(true); setParticles(true); setPlayers(true)
     setGraphicsLevel(1); unlockFPS()
+    suppressNotify = false
     notify("FPS Boost", "All boosts applied!")
 end)
 
 makeBtn(Scroll, "↩️ Restore Everything", C.red, function()
+    suppressNotify = true
     setShadows(false); setEffects(false); setFog(false); setAtmosphere(false)
     setSky(false); setTextures(false); setParticles(false); setPlayers(false)
     setGraphicsLevel(21)
+    suppressNotify = false
     notify("FPS Boost", "Everything restored!")
 end)
 
