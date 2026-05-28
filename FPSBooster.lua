@@ -190,6 +190,118 @@ local function unlockFPS()
     notify("FPS Boost", "FPS unlocked!")
 end
 
+-- ===== EXPERIMENTAL: DYNAMIC LOD =====
+local LOD_ENABLED     = false
+local DYN_TEX_ENABLED = false
+local CULL_DIST       = 200  -- studs, adjusted by presets
+
+local expConn    = nil
+local lodCache   = {}   -- cached BasePart list, rebuilt every few seconds
+local lodAge     = 0    -- time since last cache rebuild
+local lodIdx     = 1    -- chunk cursor
+local lodStripped = {}  -- [part] = original Material, for dynTex restore
+
+local function stopLODLoop()
+    if expConn then expConn:Disconnect(); expConn = nil end
+end
+
+local function startLODLoop()
+    stopLODLoop()
+    lodAge = 999  -- force immediate cache build on first frame
+    expConn = RunService.Heartbeat:Connect(function(dt)
+        lodAge += dt
+
+        -- Rebuild the BasePart cache every 4 seconds
+        if lodAge >= 4 then
+            lodAge = 0
+            lodIdx = 1
+            lodCache = {}
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    table.insert(lodCache, obj)
+                end
+            end
+        end
+
+        if #lodCache == 0 then return end
+
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local pos = root.Position
+
+        -- Process up to 400 parts per frame to avoid spikes
+        local endIdx = math.min(lodIdx + 399, #lodCache)
+        for i = lodIdx, endIdx do
+            local obj = lodCache[i]
+            if obj and obj.Parent and not obj:IsDescendantOf(char) then
+                local ok, dist = pcall(function()
+                    return (obj.Position - pos).Magnitude
+                end)
+                if ok then
+                    local inRange = dist <= CULL_DIST
+
+                    if LOD_ENABLED then
+                        pcall(function()
+                            obj.LocalTransparencyModifier = inRange and 0 or 1
+                        end)
+                    end
+
+                    if DYN_TEX_ENABLED and inRange and not lodStripped[obj] then
+                        pcall(function()
+                            lodStripped[obj] = obj.Material
+                            obj.Material = Enum.Material.SmoothPlastic
+                            for _, child in pairs(obj:GetChildren()) do
+                                if child:IsA("Decal") or child:IsA("Texture") then
+                                    child.Transparency = 1
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+
+        lodIdx = endIdx + 1
+        if lodIdx > #lodCache then lodIdx = 1 end
+    end)
+end
+
+local function setLOD(on)
+    LOD_ENABLED = on
+    if not on then
+        -- restore visibility for all cached parts
+        for _, obj in ipairs(lodCache) do
+            if obj and obj.Parent then
+                pcall(function() obj.LocalTransparencyModifier = 0 end)
+            end
+        end
+    end
+    if LOD_ENABLED or DYN_TEX_ENABLED then startLODLoop() else stopLODLoop() end
+end
+
+local function setDynTex(on)
+    DYN_TEX_ENABLED = on
+    if not on then
+        -- restore stripped materials
+        for part, mat in pairs(lodStripped) do
+            if part and part.Parent then
+                pcall(function()
+                    part.Material = mat
+                    for _, child in pairs(part:GetChildren()) do
+                        if child:IsA("Decal") or child:IsA("Texture") then
+                            child.Transparency = 0
+                        end
+                    end
+                end)
+            end
+        end
+        lodStripped = {}
+    end
+    if LOD_ENABLED or DYN_TEX_ENABLED then startLODLoop() else stopLODLoop() end
+end
+
 -- ===== PERFORMANCE CHECK =====
 local function checkPerformance()
     local sum = 0
@@ -428,6 +540,53 @@ local function makeBtn(parent, text, color, fn)
     return b
 end
 
+-- compact toggle used in the settings page
+local function makeSettingsToggle(label, desc, onFn, offFn)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1,0,0,46); row.BackgroundColor3 = C.row
+    row.BorderSizePixel = 0; row.ZIndex = 15; row.Parent = SettingsPage
+    Instance.new("UICorner",row).CornerRadius = UDim.new(0,8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1,-74,0,20); lbl.Position = UDim2.new(0,10,0,4)
+    lbl.BackgroundTransparency = 1; lbl.TextColor3 = C.text
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = label; lbl.ZIndex = 16; lbl.Parent = row
+
+    local descLbl = Instance.new("TextLabel")
+    descLbl.Size = UDim2.new(1,-74,0,16); descLbl.Position = UDim2.new(0,10,0,26)
+    descLbl.BackgroundTransparency = 1; descLbl.TextColor3 = C.sub
+    descLbl.Font = Enum.Font.Gotham; descLbl.TextSize = 9
+    descLbl.TextXAlignment = Enum.TextXAlignment.Left; descLbl.TextWrapped = true
+    descLbl.Text = desc; descLbl.ZIndex = 16; descLbl.Parent = row
+
+    local isOn = false
+    local togBtn = Instance.new("TextButton")
+    togBtn.Size = UDim2.new(0,54,0,26); togBtn.Position = UDim2.new(1,-60,0.5,-13)
+    togBtn.BackgroundColor3 = C.row; togBtn.TextColor3 = C.sub
+    togBtn.Font = Enum.Font.GothamBold; togBtn.TextSize = 10
+    togBtn.Text = "OFF"; togBtn.BorderSizePixel = 0; togBtn.ZIndex = 16; togBtn.Parent = row
+    Instance.new("UICorner",togBtn).CornerRadius = UDim.new(0,6)
+    local togStroke = Instance.new("UIStroke")
+    togStroke.Color = C.sub; togStroke.Thickness = 1; togStroke.Parent = togBtn
+
+    local function setOn(state)
+        isOn = state
+        if state then
+            togBtn.Text = "ON"; togBtn.TextColor3 = C.accent
+            togBtn.BackgroundColor3 = Color3.fromRGB(20,50,35); togStroke.Color = C.accent
+            onFn()
+        else
+            togBtn.Text = "OFF"; togBtn.TextColor3 = C.sub
+            togBtn.BackgroundColor3 = C.row; togStroke.Color = C.sub
+            offFn()
+        end
+    end
+    togBtn.MouseButton1Click:Connect(function() setOn(not isOn) end)
+    return row, setOn
+end
+
 -- ===== BUILD MAIN UI =====
 sectionLabel(Scroll, "Visual Boosts")
 
@@ -579,6 +738,65 @@ makeBtn(SettingsPage, "📊 Check Performance", C.blue, function()
         perfLbl.Text = "Low ("..avg.." FPS) — enable all boosts"
     end
 end)
+
+sectionLabel(SettingsPage, "Experimental")
+
+-- warning label
+local warnLbl = Instance.new("TextLabel")
+warnLbl.Size = UDim2.new(1,0,0,28); warnLbl.BackgroundColor3 = Color3.fromRGB(60,20,20)
+warnLbl.TextColor3 = C.yellow; warnLbl.Font = Enum.Font.GothamBold; warnLbl.TextSize = 9
+warnLbl.Text = "⚠  client-side only · may break in some games"; warnLbl.ZIndex = 15
+warnLbl.Parent = SettingsPage
+Instance.new("UICorner",warnLbl).CornerRadius = UDim.new(0,6)
+
+-- cull distance presets
+local distLbl = Instance.new("TextLabel")
+distLbl.Size = UDim2.new(1,0,0,14); distLbl.BackgroundTransparency = 1
+distLbl.TextColor3 = C.sub; distLbl.Font = Enum.Font.Gotham; distLbl.TextSize = 9
+distLbl.TextXAlignment = Enum.TextXAlignment.Left
+distLbl.Text = "Cull distance:"; distLbl.ZIndex = 15; distLbl.Parent = SettingsPage
+
+local distRow = Instance.new("Frame")
+distRow.Size = UDim2.new(1,0,0,28); distRow.BackgroundTransparency = 1
+distRow.ZIndex = 15; distRow.Parent = SettingsPage
+local distLayout = Instance.new("UIListLayout")
+distLayout.FillDirection = Enum.FillDirection.Horizontal
+distLayout.Padding = UDim.new(0,4); distLayout.Parent = distRow
+
+local distPresets = {{"Near",100},{"Med",200},{"Far",350},{"Max",550}}
+for i, preset in ipairs(distPresets) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0,60,1,0)
+    b.BackgroundColor3 = i == 2 and C.blue or C.row  -- Med selected by default
+    b.TextColor3 = i == 2 and Color3.new(1,1,1) or C.text
+    b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.Text = preset[1]
+    b.BorderSizePixel = 0; b.ZIndex = 16; b.Parent = distRow
+    Instance.new("UICorner",b).CornerRadius = UDim.new(0,6)
+    b.MouseButton1Click:Connect(function()
+        CULL_DIST = preset[2]
+        for _, child in pairs(distRow:GetChildren()) do
+            if child:IsA("TextButton") then
+                child.BackgroundColor3 = C.row; child.TextColor3 = C.text
+            end
+        end
+        b.BackgroundColor3 = C.blue; b.TextColor3 = Color3.new(1,1,1)
+        notify("LOD", "Cull distance: "..preset[1].." ("..preset[2].." studs)")
+    end)
+end
+
+makeSettingsToggle(
+    "🗺  Part Culling",
+    "Hides parts beyond cull distance, restores when back in range",
+    function() setLOD(true) end,
+    function() setLOD(false) end
+)
+
+makeSettingsToggle(
+    "🎨  Dynamic Tex Strip",
+    "Strips textures from parts as they enter range (progressive)",
+    function() setDynTex(true) end,
+    function() setDynTex(false) end
+)
 
 -- ===== SETTINGS TOGGLE =====
 local settingsOpen = false
